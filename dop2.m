@@ -7,7 +7,22 @@ crc = [1 0 1 0 0 1 1 0 1 0 1 1 1 1 0 0 1]; %crc16 x16+x13+x12+x11+x10+x8+x6+x5+x
 r = length(crc)-1;
 [H, G] = hammgen(4);
 hammParam = [15, 11];
-eVectors = MostSuitableEVectors(H, hammParam); % массив наиболее подходящих векторов ошибки для синдромного декодирования по Хэммингу
+% eVectors = MostSuitableEVectors(H, hammParam); % массив наиболее подходящих векторов ошибки для синдромного декодирования по Хэммингу
+eVectors = [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0;
+            0,1,0,0,0,0,0,0,0,0,0,0,0,0,0;
+            0,0,0,0,1,0,0,0,0,0,0,0,0,0,0;
+            0,0,1,0,0,0,0,0,0,0,0,0,0,0,0;
+            0,0,0,0,0,0,0,0,1,0,0,0,0,0,0;
+            0,0,0,0,0,1,0,0,0,0,0,0,0,0,0;
+            0,0,0,0,0,0,0,0,0,0,1,0,0,0,0;
+            0,0,0,1,0,0,0,0,0,0,0,0,0,0,0;
+            0,0,0,0,0,0,0,0,0,0,0,0,0,0,1;
+            0,0,0,0,0,0,0,0,0,1,0,0,0,0,0;
+            0,0,0,0,0,0,0,1,0,0,0,0,0,0,0;
+            0,0,0,0,0,0,1,0,0,0,0,0,0,0,0;
+            0,0,0,0,0,0,0,0,0,0,0,0,0,1,0;
+            0,0,0,0,0,0,0,0,0,0,0,1,0,0,0;
+            0,0,0,0,0,0,0,0,0,0,0,0,1,0,0];
 snr_arr = -10:2:10;
 snr_theor_arr = -10:10;
 
@@ -51,11 +66,13 @@ h = zeros(2^8, 12);
 for i = 1:2^8
     all_cw_for_soft(i, :) = de2bi(i-1, 8);
     temp = mod([all_cw_for_soft(i, :) 0 0 0] * G, 2);
-    h(i, :) = temp(1:12);
+    h(i, :) = temp(1:12)*2-1;
 end
 
 ind = 1;
 Pb = zeros(1, length(snr_arr));
+Pb_synd = zeros(1, length(snr_arr));
+Pb_soft = zeros(1, length(snr_arr));
 Pe_decode = zeros(1, length(snr_arr));
 Pe_decode_soft = zeros(1, length(snr_arr));
 T = zeros(1, length(snr_arr));
@@ -64,7 +81,7 @@ for SNR = snr_arr
     % Nb - кол-во битовых ошибок, Ne_decode - кол-во ошибок декодирования
     % при синдромном декодировании по Хэммингу, Ne_decode_soft - кол-во
     % ошибок декодирования при мягком декодировании по Хэммингу
-    Nb = 0; Ne_decode = 0; Ne_decode_soft = 0; 
+    Nb = 0; Nb_synd = 0; Nb_soft = 0; Ne_decode = 0; Ne_decode_soft = 0; 
     SNRi = 10^(SNR/10);
     sigma = sqrt(1/(2*SNRi));
     % Nt - кол-во тестов, Nsent - кол-во отправленных сообщений
@@ -78,13 +95,16 @@ for SNR = snr_arr
             Nt = Nt + 1;
             noisy_mes = mod_mes + sigma*randn(3, 12);
             demod_mes = noisy_mes > 0;
-            hamm_synd_decode_mes = HammingSyndromeDecoder(demod_mes, H, eVectors);
-            e = sum(xor(a, hamm_synd_decode_mes));
-            Nb = Nb + e;
-            hamm_soft_decode_mes = HammingSoftDecoder(demod_mes, all_cw_for_soft, h);
-            e_soft = sum(xor(a, hamm_soft_decode_mes));
+            [hamm_synd_decode_mes, nErrBits, v_synd] = HammingSyndromeDecoder(noisy_mes, H, eVectors, mod_mes);
+            Nb_synd = Nb_synd + v_synd;
+            Nb = Nb + nErrBits;
+            [hamm_soft_decode_mes, v_soft] = HammingSoftDecoder(noisy_mes, all_cw_for_soft, h, mod_mes);
+            Nb_soft = Nb_soft + v_soft;
             [~, s_hammsynddecoder] = gfdeconv(hamm_synd_decode_mes, crc);
+            e = sum(xor(a, hamm_synd_decode_mes));
             [~, s_hammsoftdecoder] = gfdeconv(hamm_soft_decode_mes, crc);
+            e_soft = sum(xor(a, hamm_soft_decode_mes));
+
             
             if (bi2de(s_hammsoftdecoder) == 0) && (e_soft > 0)
                 Ne_decode_soft = Ne_decode_soft + 1;
@@ -101,7 +121,9 @@ for SNR = snr_arr
         
     end
     toc
-    Pb(ind) = Nb/(n*(m+r));
+    Pb(ind) = Nb/(Nt * 36);
+    Pb_synd(ind) = Nb_synd/(Nt * 36);
+    Pb_soft(ind) = Nb_soft/(Nt * 36);
     Pe_decode(ind) = Ne_decode/Nt;
     Pe_decode_soft(ind) = Ne_decode_soft/Nt;
     T(ind) = (m * Nsent)/(36 * Nt);
@@ -115,6 +137,12 @@ semilogy(snr_theor_arr, Pe_decode_Theor, 'g', ...
          snr_arr, Pe_decode_soft, 'ko');
 legend('Ped upper boound', 'Ped theor', 'Ped synd', 'Ped soft');
 figure(2);
+semilogy(snr_theor_arr, Pb_theor, ...
+         snr_arr, Pb, 'o', ...
+         snr_arr, Pb_synd, '*', ...
+         snr_arr, Pb_soft, 'x')
+legend('Pb_theor', 'Pb', 'Pb_synd', 'Pb_soft')
+figure(3);
 semilogy(snr_arr, T);
 
 
@@ -151,7 +179,7 @@ function eVectors = MostSuitableEVectors(H, hammParam)
     end
 end
 
-function decodeCW = HammingSyndromeDecoder(demodW, H, eVectors)
+function [decodeCW, nErrBits, v] = HammingSyndromeDecoder(noisy_mes, H, eVectors, modCW)
 % Функция синдромного декодирования Хэмминга
 % Аргументы:
 % demodW - демодулированное кодовое слово разбитое на 3 части по 12 бит,
@@ -160,20 +188,22 @@ function decodeCW = HammingSyndromeDecoder(demodW, H, eVectors)
 % eVectors - наиболее подходящие вектора ошибок для каждого синдрома
 % Результат:
 % decodeCW - декодированное кодовое слово размером 24 бита
-
-    demodW = [demodW(:,:) [0 0 0; 0 0 0; 0 0 0]]; % добавление нулей, чтобы было 15 бит в каждой части
-    decodeCW = zeros(3, 8);
+    
+    nErrBits = sum(sum(xor(noisy_mes > 0, modCW > 0)));
+    demodW = [noisy_mes(:,:)>0 [0 0 0; 0 0 0; 0 0 0]]; % добавление нулей, чтобы было 15 бит в каждой части
+    decode = zeros(3, 12);
     for part = 1:3
         s = bi2de(mod(demodW(part, :)*H', 2)); % вычисление синдрома
         if s > 0
             demodW(part, :) = gfadd(demodW(part, :), eVectors(s, :));
         end
-        decodeCW(part, :) = demodW(part, 5:end-3);
+        decode(part, :) = demodW(part, 1:end-3);
     end
-    decodeCW = reshape(decodeCW', 1, 24);
+    v = sum(sum(xor(decode, modCW > 0)));
+    decodeCW = reshape(decode(:, 5:end)', 1, 24);
 end
 
-function decodeCW = HammingSoftDecoder(demodCW, allCW, h)
+function [decodeCW, v] = HammingSoftDecoder(noisy_mes, allCW, h, modCW)
 % Функция мягкого декодирования по Хэммингу
 % Аргументы:
 % demodCW - демодулированное кодовое слово разбитое на 3 части по 12 бит,
@@ -184,17 +214,19 @@ function decodeCW = HammingSoftDecoder(demodCW, allCW, h)
 % Результат:
 % decodeCW - декодированное кодовое слово размером 24 бита
 
-    min_d = [12 12 12];
+    min_d = [100 100 100];
     decodeCW = zeros(3, 8);
+    cor = zeros(3, 12);
     for part = 1:3
         for i = 1:2^8
-            min = sum(gfadd(double(demodCW(part, :)), h(i, :)));
+            min = sqrt(sum((noisy_mes(part, :) - h(i, :)).^2));
             if min < min_d(part)
                 min_d(part) = min;
                 decodeCW(part, :) = allCW(i, :);
+                cor(part, :) = h(i, :);
             end
         end
     end
+    v = sum(sum(xor(cor > 0, modCW > 0)));
     decodeCW = reshape(decodeCW', 1, 24);
 end
-
